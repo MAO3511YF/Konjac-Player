@@ -1,0 +1,34 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Rust / Tauri build output
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Local scratch: screen captures, CDP probe scripts, icon candidates.
+# None of it is part of the app; `src/` never reads from these.
+.spike/
+tools/
+vibe_images/
+.taste-skill/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
