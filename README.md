@@ -107,3 +107,6 @@ index.html       ?bar=1 时同一个包渲染成小窗竖栏
 
 MIT，见 [LICENSE](LICENSE)。简言之：随便用、随便改、随便商用，保留原作者版权声明即可，
 软件按「现状」提供，不承担任何担保责任。
+
+界面用的 [Inter](https://github.com/rsms/inter) 字体随包分发，它是 SIL Open Font License 1.1
+授权，原文见 [src/assets/fonts/LICENSE-inter.txt](src/assets/fonts/LICENSE-inter.txt)。

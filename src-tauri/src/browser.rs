@@ -68,6 +68,7 @@ fn browser_args() -> String {
 
 /// Debug builds only: gives a shell webview its WebView2 process's debug port.
 /// Release builds keep Tauri's own argument set.
+#[cfg_attr(not(debug_assertions), allow(unused_variables))] // the port is a debug-only concept
 fn with_debug_port(
     builder: WebviewBuilder<tauri::Wry>,
     port: &str,

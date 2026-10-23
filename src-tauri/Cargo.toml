@@ -2,7 +2,7 @@
 name = "video-broswer"
 version = "0.1.0"
 description = "魔芋播放器 — multi-site video player with an always-on-top mini window"
-authors = ["魔芋播放器 contributors"]
+authors = ["MAO3511YF"]
 license = "MIT"
 edition = "2024"
 
