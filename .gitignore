@@ -32,3 +32,6 @@ vibe_images/
 *.njsproj
 *.sln
 *.sw?
+
+# 发布产物（安装包），只留在本机，不进仓库
+发布/
