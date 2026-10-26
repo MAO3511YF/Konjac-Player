@@ -1,6 +1,6 @@
 [package]
 name = "video-broswer"
-version = "0.1.0"
+version = "0.1.1"
 description = "魔芋播放器 — multi-site video player with an always-on-top mini window"
 authors = ["MAO3511YF"]
 license = "MIT"

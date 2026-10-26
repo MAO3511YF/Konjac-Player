@@ -174,6 +174,12 @@ pub async fn quit(app: AppHandle) -> CmdResult<()> {
 #[tauri::command]
 pub async fn window_control(app: AppHandle, what: String) -> CmdResult<()> {
     on_main(&app, move |app| {
+        // 收进托盘 is the one that is not about this window alone: it has to leave
+        // the small window floating, so `browser` decides whether it is allowed.
+        if what == "tuck" {
+            let on = !browser::main_tucked(&app);
+            return browser::tuck_main(&app, on);
+        }
         let Some(win) = app.get_window(browser::MAIN) else {
             return Ok(());
         };
@@ -191,6 +197,13 @@ pub async fn window_control(app: AppHandle, what: String) -> CmdResult<()> {
         }
         Ok(())
     })?
+}
+
+/// Whether the main window is folded into the corner right now, so the small
+/// window's rail and the title row light up the same button for the same state.
+#[tauri::command]
+pub fn main_tucked(app: AppHandle) -> CmdResult<bool> {
+    Ok(browser::main_tucked(&app))
 }
 
 /// A row of a title-row menu, as the shell describes it.

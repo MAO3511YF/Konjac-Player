@@ -63,6 +63,10 @@ pub struct AppState {
     /// What the ✕ does: fold into the corner tray, or quit. Mirrors the setting
     /// of the same name and is read on the event loop, where no file IO belongs.
     pub close_to_tray: Mutex<bool>,
+    /// Whether the main window is folded into the notification area on purpose
+    /// while the small window keeps floating. The rail's button and the title
+    /// row's show the same state, so this is the one place it is remembered.
+    pub main_hidden: Mutex<bool>,
     pub log: Mutex<Vec<String>>,
 }
 
@@ -84,6 +88,7 @@ impl Default for AppState {
             boss_combo: Mutex::new(crate::commands::DEFAULT_BOSS_KEY.into()),
             boss_shortcut: Mutex::new(None),
             close_to_tray: Mutex::new(true),
+            main_hidden: Mutex::new(false),
             log: Mutex::new(Vec::new()),
         }
     }

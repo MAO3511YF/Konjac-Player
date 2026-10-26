@@ -121,6 +121,7 @@ pub fn run() {
             commands::close_all,
             commands::quit,
             commands::window_control,
+            commands::main_tucked,
             commands::popup_menu,
             commands::app_log
         ])

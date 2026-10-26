@@ -140,6 +140,16 @@ function Icon({ name }: { name: string }) {
     wmin: <path d="M5.5 13.5h13" />,
     wmax: <rect x="5.5" y="5.5" width="13" height="13" rx="2" />,
     wclose: <path d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5" />,
+    /// 主界面收进托盘：一整扇窗，和右下角那一格——托盘就在屏幕那一角。箭头说明
+    /// 窗是走进那一格里，不是被关掉。
+    tuck: (
+      <>
+        <rect x="3" y="4" width="12" height="9.5" rx="2" />
+        <rect x="14.5" y="14.5" width="6.5" height="6.5" rx="1.6" />
+        <path d="M12.6 11.4 17 15.2" />
+        <path d="M17.6 12.6v3h-3" />
+      </>
+    ),
     /// The small window's way out. Inset and lighter than the shell's ✕ so it
     /// reads as "put this away" rather than as a destructive delete.
     exit: <path d="M7 7l10 10M17 7 7 17" />,
@@ -323,6 +333,19 @@ function MiniRail() {
       setNote(typeof e === 'string' ? e : (e as Error)?.message ?? String(e)),
     );
   const ctl = (what: string) => ask('mini_ctl', { what });
+  // 主界面收没收进托盘只有一处真相：Rust。竖栏这个键和标题行那个键都来这里查，
+  // 所以两边永远亮得一样。
+  const [tucked, setTucked] = useState(false);
+  const readTucked = useCallback(() => {
+    invoke<boolean>('main_tucked')
+      .then((v) => setTucked(!!v))
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    readTucked();
+    const t = setInterval(readTucked, 700);
+    return () => clearInterval(t);
+  }, [readTucked]);
   const pct = mini && mini.duration > 0 ? Math.min(100, (mini.position / mini.duration) * 100) : 0;
 
   useEffect(() => {
@@ -362,6 +385,19 @@ function MiniRail() {
       >
         <Icon name={land ? 'port' : 'land'} />
         <i>{land ? '竖屏' : '横屏'}</i>
+      </button>
+      <button
+        className={tucked ? 'vstrip-btn on' : 'vstrip-btn'}
+        title={
+          tucked
+            ? '唤回主界面：站点库和标签都回来，小窗不停'
+            : '收起主界面：桌面只留这个小窗，主界面藏进右下角托盘（声音不停）'
+        }
+        onMouseDown={hold}
+        onClick={() => ask('window_control', { what: 'tuck' }).then(readTucked)}
+      >
+        <Icon name="tuck" />
+        <i>{tucked ? '唤回' : '收起'}</i>
       </button>
       <span className="vstrip-split" />
       <button className="vstrip-btn" title={`${playing ? '暂停' : '播放'}（点一下画面也能开关）`} onMouseDown={hold} onClick={() => ctl('toggle')}>
@@ -1229,6 +1265,15 @@ function Shell() {
           </button>
         )}
         <span className="wbtns" data-tauri-drag-region>
+          {miniTab && (
+            <button
+              className="wb"
+              title="收进托盘：主界面藏到右下角，只留置顶小窗继续播（小窗右侧竖栏是同一个键）"
+              onClick={() => call('window_control', { what: 'tuck' })}
+            >
+              <Icon name="tuck" />
+            </button>
+          )}
           <button className="wb" title="最小化" onClick={() => call('window_control', { what: 'min' })}>
             <Icon name="wmin" />
           </button>

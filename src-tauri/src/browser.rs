@@ -884,6 +884,8 @@ pub fn attach_back(app: &AppHandle) -> Result<(), AppError> {
         let _ = main.unminimize();
         main.set_focus()?;
     }
+    // The page has a window to live in again, so a trip to the corner is over.
+    *state.main_hidden.lock().unwrap() = false;
     activate(app, &label)?;
     relayout_soon(app);
     Ok(())
@@ -1387,6 +1389,7 @@ fn bring_main_front(app: &AppHandle) {
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
+    *app.state::<AppState>().main_hidden.lock().unwrap() = false;
     layout(app);
 }
 
@@ -1669,10 +1672,16 @@ pub const PAUSE_BRIDGE: &str = r#"
     /// and simply paints them at `opacity: 0`, so the small window looks like it
     /// threw the bar away when it is in fact sitting there transparent.
     ///
-    /// Only boxes that already have a size are marked — a panel the site folded
-    /// to `display: none` has none and stays folded. The mark is a class rather
-    /// than an inline write because the bar has to be able to put itself away
-    /// again: left up around the clock it sits on top of the subtitles.
+    /// Only a *fade* is woken. A box the site keeps at full opacity and
+    /// `visibility: hidden` is not a sleeping bar, it is a panel the viewer
+    /// closed: that is exactly how B 站 parks its 选集 drawer, and forcing those
+    /// visible opened the drawer in the small window and left no way to shut it
+    /// again — the site's own close button was underneath our `!important`.
+    /// `display: none` boxes are already skipped: they have no size to mark.
+    ///
+    /// The mark is a class rather than an inline write because the bar has to be
+    /// able to put itself away again: left up around the clock it sits on top of
+    /// the subtitles.
     keepUi: function (frame, v) {
       if (!frame) return;
       var box = frame.getBoundingClientRect();
@@ -1687,7 +1696,7 @@ pub const PAUSE_BRIDGE: &str = r#"
         if (r.bottom < box.top || r.top > box.bottom) continue;
         for (var n = e; n && n !== frame; n = n.parentElement) {
           var cs = getComputedStyle(n);
-          if (parseFloat(cs.opacity) >= 0.99 && cs.visibility !== 'hidden') continue;
+          if (parseFloat(cs.opacity) >= 0.99) continue;
           if (n.classList.contains('vb-ui')) break;
           n.classList.add('vb-ui');
           marked.push(n);
@@ -1721,7 +1730,7 @@ pub const PAUSE_BRIDGE: &str = r#"
       if (!document.getElementById('vb-ui-css')) {
         var s = document.createElement('style');
         s.id = 'vb-ui-css';
-        s.textContent = 'html.vb-ui .vb-ui{opacity:1!important;visibility:visible!important}' +
+        s.textContent = 'html.vb-ui .vb-ui{opacity:1!important}' +
           'html:not(.vb-ui) .vb-bar{opacity:0!important;pointer-events:none;transition:opacity .18s ease}';
         document.head.appendChild(s);
       }
@@ -2164,7 +2173,19 @@ pub const PAUSE_BRIDGE: &str = r#"
     /// whatever element is under the pointer, not at the window, so the event is
     /// aimed at the centre of the picture; if that moves nothing the arrow key is
     /// tried, which is the other thing a feed is written to answer.
+    ///
+    /// There is a third shape, and the rail has to answer it too: a feed's
+    /// *landing* wall (抖音精选 before anything is clicked) is one real scroll box
+    /// whose video has never started, so it paints at zero height and answers
+    /// neither a flick nor an arrow key — its next item is one screen further
+    /// down. Which lever to pull comes from the page, not from the host: a
+    /// picture that fills the frame is a swiper, a frame with no picture is a
+    /// wall. Measured, not assumed: on the wall a hand-written wheel only dragged
+    /// the scroll box 100 px and then reported that nothing could page.
     flip: function (dir) {
+      if (vb.pictureShare() < 0.4 && vb.slideScreen(dir)) {
+        return vb.note(dir > 0 ? '已往下翻一屏' : '已往上翻一屏');
+      }
       var before = vb.tag();
       var x = Math.round(innerWidth / 2), y = Math.round(innerHeight / 2);
       var el = document.elementFromPoint(x, y) || document.body;
@@ -2184,10 +2205,30 @@ pub const PAUSE_BRIDGE: &str = r#"
         ev.__vb = 1;
         document.dispatchEvent(ev);
         setTimeout(function () {
-          vb.note(moved() ? (dir > 0 ? '已滑到下一条' : '已回到上一条') : '这一页翻不动，也没找到下一条');
+          if (moved()) return vb.note(dir > 0 ? '已滑到下一条' : '已回到上一条');
+          if (vb.slideScreen(dir)) return vb.note(dir > 0 ? '已往下翻一屏' : '已往上翻一屏');
+          vb.note('这一页翻不动，也没找到下一条');
         }, 1200);
       }, 700);
       vb.note('翻页中…');
+    },
+    /// How much of the small window the playing picture covers: 1 for a feed that
+    /// owns the frame, 0 for a wall of cards that has not started playing.
+    pictureShare: function () {
+      var v = vb.top();
+      if (!v) return 0;
+      var r = v.getBoundingClientRect();
+      var area = (innerWidth || 1) * (innerHeight || 1);
+      return Math.min(1, Math.max(0, (r.width * r.height) / area));
+    },
+    /// Hand the page's own scroll box one screen over, and only claim it moved
+    /// when the box says it did.
+    slideScreen: function (dir) {
+      var box = vb.scroller();
+      if (!box) return false;
+      var at = box.scrollTop;
+      box.scrollTop = at + dir * box.clientHeight;
+      return box.scrollTop !== at;
     },
     /// Two shapes of "the next one" exist on these sites: a list that scrolls,
     /// and an immersive feed that answers a flick. Both are tried, and the note
@@ -2404,6 +2445,7 @@ pub fn hide_everything(app: &AppHandle) -> Result<(), AppError> {
         }
     }
     *state.boss_hidden.lock().unwrap() = true;
+    *state.main_hidden.lock().unwrap() = true;
     state.record(&format!("boss: hidden, {combo} restores"));
     Ok(())
 }
@@ -2424,7 +2466,50 @@ pub fn hide_to_tray(app: &AppHandle) {
             let _ = w.hide();
         }
     }
+    *app.state::<AppState>().main_hidden.lock().unwrap() = true;
     app.state::<AppState>().record("hidden to tray");
+}
+
+/// Fold the main window into the notification area and leave the small window
+/// floating: this is the "only the video is on the desktop" shape the viewer asks
+/// for once a page is in the mini window. It is the opposite of the ✕ and of the
+/// boss key — nothing is paused, nothing is muted, and the tray's 显示魔芋播放器
+/// brings it back.
+///
+/// Refused with a reason when there is no small window to keep watching: hiding
+/// the only visible window on nothing but a tray icon leaves a running app with
+/// no video and no window, which reads as a crash.
+pub fn tuck_main(app: &AppHandle, on: bool) -> Result<(), AppError> {
+    let state = app.state::<AppState>();
+    if on && state.mini_tab.lock().unwrap().is_none() {
+        return Err(AppError::Message(
+            "小窗里还没有页面：先把标签行的 ⧉ 按一下，把视频搬进小窗，主界面才收得掉".into(),
+        ));
+    }
+    if let Some(w) = app.get_window(MAIN) {
+        if on {
+            w.hide()?;
+        } else {
+            raise(&w, true);
+        }
+    }
+    *state.main_hidden.lock().unwrap() = on;
+    state.record(if on {
+        "main window tucked away, small window left on top"
+    } else {
+        "main window back from the corner"
+    });
+    if !on {
+        layout(app);
+        relayout_soon(app);
+    }
+    Ok(())
+}
+
+/// Whether the main window is currently tucked away, for the two buttons that
+/// show the same state: the small window's rail and the main window's title row.
+pub fn main_tucked(app: &AppHandle) -> bool {
+    *app.state::<AppState>().main_hidden.lock().unwrap()
 }
 
 /// Brings one window back in front of the user.
@@ -2455,5 +2540,6 @@ pub fn show_everything(app: &AppHandle) {
     each_tab(app, "window.__vb && window.__vb.restore()");
     let state = app.state::<AppState>();
     *state.boss_hidden.lock().unwrap() = false;
+    *state.main_hidden.lock().unwrap() = false;
     state.record("windows restored");
 }
