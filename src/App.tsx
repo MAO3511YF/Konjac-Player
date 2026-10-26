@@ -662,7 +662,7 @@ function SettingsSheet({
 
           <Section
             title="置顶小窗"
-            note="小窗里只留播放器：点一下画面出现控制条（进度、暂停、倍速、音量、下一集），按住画面不放临时快进一倍、松开恢复，右键回到主界面。抖音、快手这类上下滑的短视频站，控制条上的「下一集」会换成上下翻页按钮，小窗里直接按键盘 ↓ 翻下一条、↑ 回上一条。"
+            note="小窗里只留播放器：站点自己带播放条的（B站、抖音）保留站点那条，我们不再叠一条自己的；短视频站压在画面上的用户名与简介块，横屏小窗里会自动缩小一档、不挡画面。没有的才由我们补一条（进度、暂停、倍速、音量、下一集），点一下画面出现，按住画面不放临时快进一倍、松开恢复，右键回到主界面。抖音、快手这类上下滑的短视频站，控制条上的「下一集」会换成上下翻页按钮，小窗里直接按键盘 ↓ 翻下一条、↑ 回上一条。"
           >
             <div className="seg">
               <button className={settings.miniRatio === 'port' ? 'on' : ''} onClick={() => save({ miniRatio: 'port' })}>
@@ -887,7 +887,7 @@ function Guide({ what, onClose }: { what: 'guide' | 'about'; onClose: () => void
             </li>
             <li>
               <b>置顶小窗</b>
-              <span>识别到视频时右侧会闪动提示。右侧两个按钮是「以小窗竖屏打开」「以小窗横屏打开」；小窗里点画面出控制条——进度可拖、暂停、倍速（点按切换，按住画面临时快进一倍）、音量条、「下一集」，右键回到主界面。抖音、快手这类滑动翻页的短视频站，「下一集」位置换成上下翻页按钮，小窗里按 ↓ 下一条、↑ 上一条；B站、AcFun 这类长视频站仍是跳下一集。</span>
+              <span>右侧两个按钮是「以小窗竖屏打开」「以小窗横屏打开」，页面正在主窗口里看时按它就发到置顶小窗；小窗里点画面出控制条——进度可拖、暂停、倍速（点按切换，按住画面临时快进一倍）、音量条、「下一集」，右键回到主界面。站点自己带播放条的（B站、抖音）一律保留站点那条，我们不再叠一条自己的。短视频站压在画面上的用户名与简介块，横屏小窗里会自动缩小一档、不挡画面，竖屏保持站点原样。抖音、快手这类滑动翻页的短视频站，「下一集」位置换成上下翻页按钮，小窗里按 ↓ 下一条、↑ 上一条；B站、AcFun 这类长视频站仍是跳下一集。</span>
             </li>
             <li>
               <b>关闭小窗</b>
@@ -1206,8 +1206,6 @@ function Shell() {
     save({ foldedGroups: next });
   };
 
-  const prompt = !!activeTab && activeTab.videos > 0 && !miniTab;
-
   return (
     <div
       className={narrow ? 'app narrow' : 'app'}
@@ -1386,11 +1384,6 @@ function Shell() {
           </main>
 
           <aside className="rail">
-            {prompt && (
-              <button className="ask" title="把当前页发到置顶小窗" onClick={() => toggleMini()}>
-                是否开启小窗观看
-              </button>
-            )}
             <button
               className="rbtn"
               disabled={!miniTab && !activeTab}

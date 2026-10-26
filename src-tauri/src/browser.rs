@@ -273,6 +273,23 @@ pub fn create_main_window(app: &AppHandle) -> Result<Window<tauri::Wry>, AppErro
             // The ✕ is "out of sight, still playing" while the corner icon is
             // there to bring it back; without one, closing means quitting, or
             // the user would be left with an app they cannot reach.
+            //
+            // Once a page is pinned in the small window the ✕ is not about the
+            // video at all, only about the browser around it: it folds the main
+            // window into the corner and leaves the small window floating and
+            // playing. Nothing is paused or muted — that stays the boss key's job.
+            let has_mini = handle
+                .state::<AppState>()
+                .mini_tab
+                .lock()
+                .unwrap()
+                .is_some();
+            if has_mini {
+                if tuck_main(&handle, true).is_ok() {
+                    api.prevent_close();
+                    return;
+                }
+            }
             let to_tray = {
                 let state = handle.state::<AppState>();
                 *state.close_to_tray.lock().unwrap()
@@ -1551,7 +1568,13 @@ pub const PAUSE_BRIDGE: &str = r#"
       if (vb.cinemaOn) return 'already';
       var v = vb.top();
       if (!v) return 'no video';
-      if (vb.isFeed()) return vb.cinemaFeed(v);
+      /// The feed branch is built around the slide the picture stands in: it folds
+      /// the page *around* that slide and nothing else. With no slide to stand in
+      /// — a 抖音 详情页, where one player sits in a page of text — the same walk
+      /// starts at the picture and folds its own 进度 bar along with everything
+      /// else, which is the small window losing the bar. So the branch takes a page
+      /// only when the slide it assumes is really there.
+      if (vb.isFeed() && vb.panel(v)) return vb.cinemaFeed(v);
       var rec = [];
       var set = function (el, prop, value) {
         rec.push([el, prop, el.style.getPropertyValue(prop), el.style.getPropertyPriority(prop)]);
@@ -1568,6 +1591,15 @@ pub const PAUSE_BRIDGE: &str = r#"
       /// fold starts one level *above* that box and leaves them where they are.
       /// Without it the small window loses the bar the viewer was already using.
       var frame = vb.playerFrame(v);
+      /// A row the site folds away as soon as the window gets small goes back in
+      /// place *before* the frame is picked, because it is also what tells the
+      /// frame to stop one level higher. B 站 gives up the 46px of its 弹幕发送栏 in
+      /// a short player; pinned at the picture's own box, that row sits outside
+      /// the fold and is gone from the small window for good.
+      if (frame) {
+        vb.showRows(frame, set);
+        frame = vb.frameAbove(frame, v);
+      }
       vb.ownUi = !!frame;
       var stop = frame ? chain.indexOf(frame) : 0;
       /// From the frame upward only. Inside it the site's own stacking order is
@@ -1604,50 +1636,282 @@ pub const PAUSE_BRIDGE: &str = r#"
       set(anchor, 'height', '100vh');
       set(anchor, 'max-width', '100vw');
       set(anchor, 'max-height', '100vh');
+      /// `inset: 0` is not where a box starts: a margin on the pinned box pushes it
+      /// off the edge it was just fastened to, and the 48px that falls outside the
+      /// small window is the bottom of the site's own 进度 bar. The same goes for
+      /// the floor a stylesheet puts under it — 抖音's 详情页 player refuses to
+      /// shrink below 440px, which in a 竖屏 window is 39px of picture past the
+      /// right edge and a bar that no longer lines up with the window.
+      set(anchor, 'margin', '0');
+      set(anchor, 'min-width', '0');
+      set(anchor, 'min-height', '0');
       // The bars a contained video leaves are the element's own background, and
       // the player boxes behind it are white — without this the small window
       // shows a bright band above the picture.
       set(anchor, 'background', '#0c1614');
       /// Everything between the picture and that box has to hand over its whole
       /// area, or the video stops at the size the page gave it and the control
-      /// bar floats in the middle of a black frame.
+      /// bar floats in the middle of a black frame. The same three properties,
+      /// one level down: a page that fastens its player to the viewport itself
+      /// keeps its gutter, its floor and its own offsets inside ours, and each of
+      /// them moves the bar off the edge of the small window.
+      ///
+      /// The height is the one that cannot always be written. A bar hung *under*
+      /// the picture's box rather than over it — xgplayer's `bottom: 48px` on the
+      /// video container, with its 进度 row as the next sibling — is the site's own
+      /// reservation, and stretching the box to the full window paints the
+      /// picture underneath the bar it was leaving room for.
       for (var m = 0; m < stop; m++) {
         set(chain[m], 'width', '100%');
-        set(chain[m], 'height', '100%');
+        if (!vb.rowSib(chain[m])) set(chain[m], 'height', '100%');
         set(chain[m], 'max-width', 'none');
         set(chain[m], 'max-height', 'none');
+        set(chain[m], 'min-width', '0');
+        set(chain[m], 'min-height', '0');
+        set(chain[m], 'margin', '0');
       }
       set(v, 'object-fit', 'contain');
       set(v, 'background', frame ? 'transparent' : '#0c1614');
+      vb.frameEl = anchor;
+      vb.stageOf(anchor, v);
+      vb.frameFit();
+      vb.reFrame();
       vb.keepUi(frame, v);
       vb.rec = rec;
       vb.cinemaOn = true;
       vb.hud();
       return 'on';
     },
-    /// The player's own box: the lowest ancestor of the picture that still holds
-    /// a control which is not the picture. B 站, ACFun and YouTube all hang their
-    /// bar — 进度、倍速、清晰度、弹幕开关 — inside one container of about the
-    /// video's own size, and that container is where the fold has to stop.
+    /// The player's own box: the *lowest* ancestor of the picture that holds the
+    /// site's control row — 进度、倍速、清晰度、弹幕开关 laid out as a strip along
+    /// the bottom of the picture. That box is where the fold has to stop: pin it
+    /// and the bar lands on the edge of the small window the site built it for.
+    ///
+    /// Not the lowest box holding *any* control: xgplayer — 抖音's 详情页 — keeps
+    /// the picture in one box and its 48px control row as that box's sibling, so
+    /// the first box that holds a control is already past the picture, and the
+    /// bar is left behind the pinned frame, out of the window.
+    ///
+    /// Nor the highest: B 站's player is a flex column, and a box three levels
+    /// above the picture makes the picture's own row shrink by the height of the
+    /// bar, which collapses the bar to zero. The outermost box that still holds a
+    /// control is the page, and the page is not the player.
     ///
     /// Recognised by shape and contents, never by class name: the sites re-hash
     /// those, and a name found by hand folds their controls away again on the
-    /// next rebuild. An ancestor meaningfully bigger than the picture is the
-    /// page rather than the player, so the climb gives up there and the caller
-    /// falls back to pinning the video alone.
+    /// next rebuild.
     playerFrame: function (v) {
-      var b = v.getBoundingClientRect();
-      if (!b.width || !b.height) return null;
+      var weak = null;
       for (var n = v.parentElement, up = 0;
            n && n.nodeType === 1 && n.tagName !== 'BODY' && n.tagName !== 'HTML' && up < 8;
            n = n.parentElement, up++) {
-        var r = n.getBoundingClientRect();
-        if (r.width > b.width * 1.25 || r.height > b.height * 1.4) return null;
-        if (vb.hasUi(n)) return n;
+        if (vb.rowUi(n, v)) return n;
+        /// A player whose bar is hidden outright (no box to recognise) still has
+        /// buttons somewhere; the lowest box holding one is the next best thing.
+        if (!weak && vb.hasUi(n)) weak = n;
       }
-      return null;
+      return weak;
     },
-    /// A control the site still shows. Faded counts: a bar that hides itself
+    /// Does this box hold the control row — a strip along the bottom of the
+    /// picture, wide as it is, with something clickable in it? A centre play
+    /// icon and a subtitle line are both controls of a kind; neither is a bar.
+    rowUi: function (box, v) {
+      var b = v.getBoundingClientRect();
+      var wide = Math.min(b.width, innerWidth || b.width) * 0.5;
+      var els = box.querySelectorAll(
+        '[class*=ctrl],[class*=control],[class*=progress],[class*=setting],[role=button],button');
+      for (var i = 0; i < els.length; i++) {
+        var e = els[i];
+        if (e === v || e.contains(v)) continue;
+        var r = e.getBoundingClientRect();
+        if (r.width < wide || r.height < 12 || r.height > 140) continue;
+        if (r.bottom < b.bottom - b.height * 0.35 || r.top > b.bottom + 90) continue;
+        if (vb.hasUi(e)) return true;
+      }
+      return false;
+    },
+    /// Is there a control row laid out directly *under* this box — the site's own
+    /// 进度 bar or 弹幕发送栏 hung as its sibling rather than over the picture? A
+    /// box with such a row under it must not be stretched into the row's space,
+    /// and the row is also what says the frame belongs one level higher.
+    rowSib: function (el) {
+      var p = el.parentElement;
+      if (!p) return false;
+      var b = el.getBoundingClientRect();
+      for (var i = 0; i < p.children.length; i++) {
+        var s = p.children[i];
+        if (s === el || (s.id && s.id.indexOf('vb-') === 0)) continue;
+        var r = s.getBoundingClientRect();
+        if (r.width < b.width * 0.5 || r.height < 12 || r.height > 140) continue;
+        if (r.top < b.bottom - 8) continue;
+        if (vb.hasUi(s)) return true;
+      }
+      return false;
+    },
+    /// Lifts the frame over a row that belongs to the player. Without it the fold
+    /// starts at the picture's own box, and everything the site stacks under that
+    /// box — B 站's danmaku input is the case that brought this about — lands
+    /// outside the pinned frame and never comes back into the small window.
+    ///
+    /// Only a row that is really the player's own lifts anything: the level above
+    /// has to be taller by about that row, and the row has to sit under the box
+    /// rather than beside it. A page that parks its comment list under the player
+    /// fails both tests, and folding the page into the small window is not the job.
+    frameAbove: function (box, v) {
+      for (var up = 0; up < 2; up++) {
+        var p = box.parentElement;
+        if (!p || p.tagName === 'BODY' || p.tagName === 'HTML') break;
+        if (!vb.rowSib(box)) break;
+        if (p.getBoundingClientRect().height - box.getBoundingClientRect().height < 12) break;
+        box = p;
+      }
+      return box;
+    },
+    /// The box the picture stands in, with the rows the site stacks under it inside
+    /// the frame noted on the way: B 站's 弹幕发送栏 is 46px of them. Measured while
+    /// the frame is still the whole window, because after the cut the two boxes are
+    /// the same height by construction.
+    stageOf: function (a, v) {
+      var h = v.getBoundingClientRect().height, stage = v;
+      /// Inside the frame, never above it: a bare `<video>` with no player box
+      /// around it *is* the frame, and the walk from there would otherwise end up
+      /// calling the document element the picture's box and resize the page.
+      for (var n = v.parentElement; n && n !== a && a.contains(n); n = n.parentElement) {
+        if (Math.abs(n.getBoundingClientRect().height - h) > 6) break;
+        stage = n;
+      }
+      vb.stageEl = stage;
+      var box = stage.getBoundingClientRect();
+      /// What the site itself keeps under the picture for its bar and its rows.
+      /// A constant of the player, not of the window, so it is measured once here
+      /// and reused on every later re-fit.
+      vb.rowPx = Math.max(0, Math.round(a.getBoundingClientRect().height - box.height));
+      /// Which box gets cut to the picture: the picture's own, or the frame around
+      /// it. A bar laid out *after* the picture in the site's flow travels with the
+      /// picture's box, which is the layout B 站 uses and the reason its 弹幕发送栏
+      /// stays under the video. A bar fastened to the frame travels with the frame,
+      /// so cutting the picture alone leaves it stranded at the far edge of the
+      /// window — what 抖音's 详情页 does with its 48px xgplayer row.
+      vb.capEl = vb.flowRow(stage) ? stage : a;
+    },
+    /// Is there a control row under this box that the page laid out in flow,
+    /// rather than one fastened to the box around it?
+    flowRow: function (s) {
+      var p = s.parentElement;
+      if (!p) return false;
+      var b = s.getBoundingClientRect();
+      for (var i = 0; i < p.children.length; i++) {
+        var e = p.children[i];
+        if (e === s || (e.id && e.id.indexOf('vb-') === 0)) continue;
+        var r = e.getBoundingClientRect();
+        if (r.width < b.width * 0.5 || r.height < 12 || r.height > 140) continue;
+        if (r.top < b.bottom - 8) continue;
+        if (!vb.hasUi(e)) continue;
+        var pos = getComputedStyle(e).position;
+        if (pos === 'static' || pos === 'relative') return true;
+      }
+      return false;
+    },
+    /// Gives the picture the height it actually has. A 16:9 video in a 401x760
+    /// 竖屏 window is 226px of picture standing in the middle of a 714px box: the
+    /// site's bar waits 190px below the picture it belongs to, and its danmaku fly
+    /// over black. The box is cut to the picture and the bar and the rows under it
+    /// come along with it; the frame keeps the whole window, so the page behind
+    /// stays covered and only the block moves.
+    ///
+    /// Everything is measured live except `rowPx`, because this runs again on every
+    /// change of shape and a number kept from the previous window is what left the
+    /// bar at the far edge after 竖屏 to 横屏.
+    frameFit: function () {
+      var a = vb.frameEl, s = vb.capEl || vb.stageEl, v = vb.top();
+      if (!a || !s || !document.contains(a) || !document.contains(s) || !v) return;
+      if (!v.videoWidth || !v.videoHeight) {
+        /// A picture the page has not measured yet is a picture not yet cut. The
+        /// metadata can take longer than any fixed wait, so the page is asked to
+        /// say so as well.
+        if (!vb.frameWait) {
+          vb.frameWait = 1;
+          var again = function () {
+            if (!vb.frameWait) return;
+            vb.frameWait = 0;
+            vb.frameFit();
+          };
+          v.addEventListener('loadedmetadata', again, { once: true });
+          setTimeout(again, 1200);
+        }
+        return;
+      }
+      var room = Math.round(a.getBoundingClientRect().height);
+      var pic = Math.round(s.getBoundingClientRect().width * v.videoHeight / v.videoWidth);
+      var block = pic + vb.rowPx;
+      if (pic > 60 && room - block > 40) {
+        s.style.setProperty('height', pic + 'px', 'important');
+        /// A flex row grows over a height written on it, which is exactly what
+        /// B 站's picture box is inside its player column.
+        s.style.setProperty('flex', 'none', 'important');
+        /// Auto margins do not centre a block in a block, so the offset is ours.
+        s.style.setProperty('margin-top', Math.max(0, Math.round((room - block) / 2)) + 'px', 'important');
+      } else {
+        s.style.setProperty('height', '100%', 'important');
+        s.style.removeProperty('flex');
+        s.style.removeProperty('margin-top');
+      }
+    },
+    /// The window changes shape under us — 竖屏 to 横屏, a drag of the edge, the
+    /// rail's own button — and a height measured in pixels is the one thing that
+    /// does not follow. One listener for the page; it speaks to whichever branch
+    /// is currently dressed: the cut frame in the player branch, the caption scale
+    /// in the feed one.
+    ///
+    /// The gate is the pinned frame, not `isFeed()`: 抖音's hostname is on the feed
+    /// list, so a 详情页 — which takes the frame branch, slide or no slide — would
+    /// otherwise keep a portrait height after a switch to landscape and strand its
+    /// own bar at the far edge of the window.
+    reFrame: function () {
+      if (vb.frameSeen) return;
+      vb.frameSeen = 1;
+      addEventListener('resize', function () {
+        clearTimeout(vb.frameTimer);
+        vb.frameTimer = setTimeout(function () {
+          if (!vb.inMini || !vb.cinemaOn) return;
+          if (vb.frameEl) vb.frameFit();
+          else if (vb.feedOn) vb.cap();
+        }, 180);
+      });
+    },
+    /// Puts back a row the site hides with an inline `display: none` the moment
+    /// the window gets small. B 站 measures its player, decides a short one has no
+    /// room for the 弹幕发送栏, and takes it away — but the viewer asked for the
+    /// site's own features to stay, and that row is the one thing under the
+    /// picture you type into rather than watch through.
+    ///
+    /// Only rows *after* the picture's own box are tried, and only ones that come
+    /// back as a row: as wide as the player, no taller than two lines, with
+    /// something clickable in it. A drawer or a parked panel that was found shut
+    /// is written straight back shut, so the lesson of the 选集 drawer — opened by
+    /// a force and left with no way to close it — is not repeated here.
+    showRows: function (box, set) {
+      var p = box.parentElement;
+      if (!p) return;
+      vb.rowEls = [];
+      var b = box.getBoundingClientRect();
+      var seen = false;
+      for (var i = 0; i < p.children.length; i++) {
+        var s = p.children[i];
+        if (s === box) { seen = true; continue; }
+        if (!seen || s.nodeType !== 1) continue;
+        if (s.id && s.id.indexOf('vb-') === 0) continue;
+        if (s.style.getPropertyValue('display') !== 'none') continue;
+        var prio = s.style.getPropertyPriority('display');
+        set(s, 'display', 'block');
+        var r = s.getBoundingClientRect();
+        if (r.width >= b.width * 0.5 && r.height >= 12 && r.height <= 90 && vb.hasUi(s)) {
+          vb.rowEls.push(s);
+          continue;
+        }
+        s.style.setProperty('display', 'none', prio);
+      }
+    },
     /// until the pointer arrives is `opacity:0`, not gone, and folding it is the
     /// difference between a player and a picture.
     hasUi: function (box) {
@@ -1715,6 +1979,9 @@ pub const PAUSE_BRIDGE: &str = r#"
         for (var j = 0; j < cand.length && j < 200; j++) {
           var b = cand[j];
           if (b === v || (b.contains && b.contains(v))) continue;
+          /// The row put back on purpose is not a bar that sleeps: B 站 keeps its
+          /// 弹幕发送栏 on screen the whole video and only fades the row above it.
+          if (vb.rowEls && vb.rowEls.indexOf(b) >= 0) continue;
           var br = b.getBoundingClientRect();
           if (br.width < 24 || br.height < 8) continue;
           if (br.top < box.bottom - Math.max(72, box.height * 0.26)) continue;
@@ -1801,7 +2068,11 @@ pub const PAUSE_BRIDGE: &str = r#"
         '[data-vbtop]{padding-top:0!important}' +
         '[data-vbside]{padding-left:0!important;padding-right:0!important}' +
         '[data-vbwide]{width:100%!important;max-width:100%!important;flex-basis:100%!important}' +
-        '[data-vbfill]{top:0!important;bottom:0!important}';
+        '[data-vbfill]{top:0!important;bottom:0!important}' +
+        '[data-vbfloor]{min-height:0!important;min-width:0!important}' +
+        /// The caption, scaled — see `cap`. A variable rather than a number in the
+        /// rule so a change of shape can update it without rewriting the sheet.
+        '[data-vbcap]{zoom:var(--vb-cap,1)!important}';
       var vh = innerHeight || 1, vw = innerWidth || 1;
       var box = function (e) { return e.getBoundingClientRect(); };
       /// A feed item is a panel the size of the screen, and the rail they sit on
@@ -1845,12 +2116,18 @@ pub const PAUSE_BRIDGE: &str = r#"
       vb.unfit();
       vb.fit(v);
       vb.hud();
+      vb.reFrame();
       vb.cinemaOn = true;
       clearInterval(vb.dressInt);
       vb.dressInt = setInterval(function () {
         if (!vb.inMini || !vb.cinemaOn) { clearInterval(vb.dressInt); vb.dressInt = 0; return; }
         var now = vb.top();
-        if (now) vb.cinemaFeed(now);
+        /// Re-dress only while the slide is still there. Mid-swipe or after the
+        /// page has changed under it, `panel` goes null, and a pass that starts
+        /// from the picture then folds the player's own bar — the very thing the
+        /// first visit refused to do. Missing a pass costs nothing; the next one
+        /// is a second and a half later.
+        if (now && vb.panel(now)) vb.cinemaFeed(now);
       }, 1500);
       /// A window that changes shape — into the small window, 竖屏 to 横屏, a drag
       /// of the edge — is precisely when the measured marks stop matching, and the
@@ -1863,7 +2140,7 @@ pub const PAUSE_BRIDGE: &str = r#"
           clearTimeout(vb.resizeT);
           vb.resizeT = setTimeout(function () {
             var now = vb.top();
-            if (vb.inMini && vb.cinemaOn && now && vb.isFeed()) vb.cinemaFeed(now);
+            if (vb.inMini && vb.cinemaOn && now && vb.isFeed() && vb.panel(now)) vb.cinemaFeed(now);
           }, 180);
         });
       }
@@ -1893,12 +2170,13 @@ pub const PAUSE_BRIDGE: &str = r#"
     /// whole window keeps squeezing a picture that has since moved into the small
     /// one, and clearing only at 收回 means the wrong one stays on screen.
     unfit: function () {
-      var on = document.querySelectorAll('[data-vbtop],[data-vbside],[data-vbwide],[data-vbfill]');
+      var on = document.querySelectorAll('[data-vbtop],[data-vbside],[data-vbwide],[data-vbfill],[data-vbfloor]');
       for (var i = 0; i < on.length; i++) {
         on[i].removeAttribute('data-vbtop');
         on[i].removeAttribute('data-vbside');
         on[i].removeAttribute('data-vbwide');
         on[i].removeAttribute('data-vbfill');
+        on[i].removeAttribute('data-vbfloor');
       }
     },
     /// Name of each reserved band comes from what it does to the player's own box,
@@ -1923,25 +2201,97 @@ pub const PAUSE_BRIDGE: &str = r#"
         /// its own parent carries.
         if (side > 16 && rp.width - r.width >= side * 0.6) p.setAttribute('data-vbside', '1');
         if (rp.width - r.width > 16) node.setAttribute('data-vbwide', '1');
+        /// The floor under it. A feed lays its item out for a whole browser
+        /// window and then refuses to let it shrink again — 抖音 keeps
+        /// `min-height:495px` on the panel and 450px on the column it stands in —
+        /// so in a 406px small window the item stays 496 tall: the picture is
+        /// letterboxed inside its own box, the band its nav bar used to stand in
+        /// comes back above it, and the 进度 bar at the bottom of the item falls
+        /// out of the window. A floor only does damage when it is bigger than the
+        /// window, so that is exactly when it goes.
+        var fl = getComputedStyle(node);
+        if (px(fl.minHeight) > (innerHeight || 1) || px(fl.minWidth) > (innerWidth || 1)) {
+          node.setAttribute('data-vbfloor', '1');
+        }
       }
       /// The strip below: the box the picture is fitted into stops short of the one
       /// it stands on by about a control bar's height.
+      ///
+      /// Only when that strip is empty. 抖音's 精选 player hangs its bar as a
+      /// sibling under the picture box and reserves the 48px for it; filling that in
+      /// puts the picture *behind* the bar, which is the one thing the viewer picked
+      /// out as wrong. A band left by chrome we folded away is different: nothing
+      /// stands in it any more, so the picture takes it.
       for (var s = v; s && s.parentElement; s = s.parentElement) {
         var ss = box(s), sp = box(s.parentElement);
-        if (sp.height - ss.height > 16 && sp.width - ss.width < 8) {
+        if (sp.height - ss.height > 16 && sp.width - ss.width < 8 && !vb.rowSib(s)) {
           s.setAttribute('data-vbfill', '1');
           break;
         }
       }
+      vb.cap(v);
+    },
+    /// Scales the caption the site lays over the picture — author, date, the
+    /// description and its hashtags. It is typeset for a whole browser window, so
+    /// in a 406px 横屏 small window the same 14px text runs to a third of the
+    /// picture the viewer is trying to watch; in a 760px 竖屏 one it is proportioned
+    /// the way the site drew it and goes untouched.
+    ///
+    /// `zoom` rather than a font size because the block sets its own sizes, line
+    /// heights and wrapping throughout, and only a scale takes all of them — and
+    /// the clicks on its 展开 and its hashtags with them. The site's own control row
+    /// and its like column are not the caption and are left alone.
+    cap: function (v) {
+      v = v || vb.top();
+      var pan = v && vb.panel(v);
+      var hit = null;
+      if (pan) {
+        var vh = innerHeight || 1, vw = innerWidth || 1;
+        var all = pan.querySelectorAll('*');
+        for (var i = 0; i < all.length; i++) {
+          var e = all[i], r = e.getBoundingClientRect();
+          /// A block of text over the lower half of the item, wide enough to be the
+          /// caption and tall enough to be more than a line. The control row is a
+          /// strip of about 48px, and the like column is a narrow one down the side.
+          if (r.width < vw * 0.3 || r.height < 60 || r.height > vh * 0.55) continue;
+          if (r.top < vh * 0.3 || r.bottom > vh + 4) continue;
+          if ((e.textContent || '').trim().length < 12) continue;
+          if (e.querySelector('video')) continue;
+          /// The caption is the block you click a name or a hashtag in.
+          if (!vb.hasLink(e)) continue;
+          hit = e;
+          break;
+        }
+      }
+      var on = document.querySelectorAll('[data-vbcap]');
+      for (var j = 0; j < on.length; j++) {
+        if (on[j] !== hit) on[j].removeAttribute('data-vbcap');
+      }
+      if (!hit) return;
+      hit.setAttribute('data-vbcap', '1');
+      var z = Math.max(0.7, Math.min(1, (innerHeight || 1) / 560));
+      document.documentElement.style.setProperty('--vb-cap', String(Math.round(z * 100) / 100));
+    },
+    /// Does this box hold a link you could actually follow — a name, a hashtag?
+    hasLink: function (box) {
+      var a = box.querySelectorAll('a[href]');
+      for (var i = 0; i < a.length; i++) {
+        var r = a[i].getBoundingClientRect();
+        if (r.width > 6 && r.height > 6) return true;
+      }
+      return false;
     },
     undressFeed: function () {
-      var on = document.querySelectorAll('[data-vbh],[data-vbtop],[data-vbside],[data-vbwide],[data-vbfill]');
+      var on = document.querySelectorAll(
+        '[data-vbh],[data-vbtop],[data-vbside],[data-vbwide],[data-vbfill],[data-vbfloor],[data-vbcap]');
       for (var i = 0; i < on.length; i++) {
         on[i].removeAttribute('data-vbh');
         on[i].removeAttribute('data-vbtop');
         on[i].removeAttribute('data-vbside');
         on[i].removeAttribute('data-vbwide');
         on[i].removeAttribute('data-vbfill');
+        on[i].removeAttribute('data-vbfloor');
+        on[i].removeAttribute('data-vbcap');
       }
       document.documentElement.removeAttribute('data-vbfeed');
       clearInterval(vb.dressInt);
@@ -2327,7 +2677,13 @@ pub const PAUSE_BRIDGE: &str = r#"
     tick: function () {
       var el = vb.hudEl, v = vb.top();
       if (!el || !v) return;
+      /// Both suppression classes are kept in step here rather than only when the
+      /// rail is first built: `hud()` hands back the element it made earlier, and
+      /// the frame — the thing that says the site has a bar of its own — is often
+      /// found a beat later than the dressing. A rail left up after that is read
+      /// as our own progress bar painted over the site's.
       el.classList.toggle('vb-feed', vb.isFeed());
+      el.classList.toggle('vb-own', !!vb.ownUi);
       var d = isFinite(v.duration) && v.duration > 0 ? v.duration : 0;
       var fill = el.querySelector('.vb-fill');
       if (fill) fill.style.width = (d ? Math.min(100, (v.currentTime / d) * 100) : 0) + '%';

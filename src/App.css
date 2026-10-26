@@ -740,33 +740,6 @@ input {
   overflow: hidden;
 }
 
-.ask {
-  writing-mode: vertical-rl;
-  text-orientation: upright;
-  letter-spacing: 0.18em;
-  font-size: calc(12px * var(--fs));
-  font-weight: 700;
-  color: #fff;
-  background: linear-gradient(180deg, var(--accent), #1c9c6e);
-  border-radius: 999px;
-  padding: 14px 9px;
-  max-height: 300px;
-  box-shadow: var(--shadow-sm);
-  animation: blink 1.25s var(--ease) infinite;
-}
-
-@keyframes blink {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.5;
-    transform: scale(0.96);
-  }
-}
-
 .rbtn {
   width: 40px;
   height: 50px;
@@ -1519,7 +1492,6 @@ input {
 
 @media (prefers-reduced-motion: reduce) {
   .run,
-  .ask,
   .beacon.on,
   .ring.float,
   .vstrip-mark.on,
